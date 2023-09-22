@@ -59,7 +59,7 @@ plugin = defaultPlugin {
       = Just (\ opts@Opts{ solverArgs = args } -> opts { solverArgs = arg : args })
     parseArgument _ = Nothing
 
-    defaultOpts = Opts { solverCmd = "z3", solverArgs = ["-smt2", "-in"], noExponent = False }
+    defaultOpts = Opts { solverCmd = "cvc5", solverArgs = ["--incremental"], noExponent = False }
 
 data Opts = Opts { solverCmd :: String
                  , solverArgs :: [String]
@@ -115,7 +115,7 @@ lookupTypeCons = do
 smtSolverStart :: Opts -> TcPluginM S
 smtSolverStart opts = do
     solver <- initSolver opts
-    _power <- tcPluginIO $ intPowerFunc solver
+    -- _power <- tcPluginIO $ intPowerFunc solver
     tcs <- lookupTypeCons
     return $ S solver tcs
   where intPowerFunc s = SMT.defineFunRec s powerSymbol [("base", SMT.tInt), ("exp", SMT.tInt)] SMT.tInt power
@@ -131,7 +131,8 @@ smtSolverStart opts = do
 smtSolverStop :: S -> TcPluginM ()
 smtSolverStop s = do
   -- do something with the exit code
-  -- cvc5 ignores 
+  -- cvc5 ignores (exit) command, so terminate by syntax error
+  tcPluginIO $ SMT.command (smtSolver s) $ SMT.const "\033"
   _exitCode <- tcPluginIO $ SMT.stop (smtSolver s)
   return ()
 
@@ -299,12 +300,3 @@ termToSExpr (TyConApp tc [x, y])
 termToSExpr t = (s,([],[Var t sName]))
   where sName = showSDocUnsafe $ ppr t
         s = SMT.const sName
-
-{-
-import Data.Proxy
-import GHC.TypeLits
-import GHC.TypeNats
-
-f :: (0 <= x) => Proxy x -> Proxy 0
-f = id
--}

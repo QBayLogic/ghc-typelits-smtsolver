@@ -3,6 +3,7 @@
 {-# LANGUAGE ConstraintKinds           #-}
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ExplicitForAll            #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE FunctionalDependencies    #-}
@@ -40,6 +41,10 @@ import Data.Proxy
 import Control.Exception
 import Test.Tasty
 import Test.Tasty.HUnit
+
+-- import GHC.TypeNats
+import Data.Type.Equality
+import Data.Proxy
 
 import ErrorTests
 
@@ -105,13 +110,6 @@ multUNat :: UNat n -> UNat m -> UNat (n * m)
 multUNat UZero      _     = UZero
 multUNat _          UZero = UZero
 multUNat (USucc x) y      = addUNat y (multUNat x y)
-
--- | Exponential of two singleton natural numbers
---
--- __NB__: Not synthesisable
--- powUNat :: UNat n -> UNat m -> UNat (n ^ m)
--- powUNat _ UZero     = USucc UZero
--- powUNat x (USucc y) = multUNat x (powUNat x y)
 
 -- | Extract the first element of a vector
 --
@@ -334,47 +332,33 @@ proxyInEq3 = proxyInEq
 proxyInEq4 :: Proxy (2*a) -> Proxy (4*a) -> ()
 proxyInEq4 = proxyInEq
 
--- COMMENTED TEST CASE
--- proxyInEq5 :: Proxy 1 -> Proxy (2^a) -> ()
--- proxyInEq5 = proxyInEq
+proxyInEq5 :: Proxy 1 -> Proxy (2^a) -> ()
+proxyInEq5 = proxyInEq
 
 proxyInEq6 :: Proxy 1 -> Proxy (a + 3) -> ()
 proxyInEq6 = proxyInEq
 
--- COMMENTED TEST CASE
--- proxyInEq7 :: Proxy 1 -> Proxy (2^(a + 3)) -> ()
--- proxyInEq7 = proxyInEq
+proxyInEq7 :: Proxy 1 -> Proxy (2^(a + 3)) -> ()
+proxyInEq7 = proxyInEq
 
--- proxyEq1
---   :: (1 <= x)
---   => Proxy ((2 ^ x) * (2 ^ (x + x)))
---   -> Proxy (2 * (2 ^ ((x + (x + x)) - 1)))
--- proxyEq1 = id
-
--- proxyEq2
---   :: (2 <= x)
---   => Proxy (((2 ^ x) - 2) * (2 ^ (x + x)))
---   -> Proxy ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))
--- proxyEq2 = id
-
-proxyEq3
+proxyEq1
   :: forall x y
    . ((x + 1) ~ (2 * y), 1 <= y)
   => Proxy x
   -> Proxy y
   -> Proxy (((2 * (y - 1)) + 1))
   -> Proxy x
-proxyEq3 _ _ x = x
+proxyEq1 _ _ x = x
 
 -- Would yield (b <=? c) ~ 'True
-proxyEq4
+proxyEq2
   :: forall a b c
    . (KnownNat a, c <= b, b <= a)
   => Proxy b
   -> Proxy c
   -> Proxy a
   -> Proxy (((a - b) + c) + (b - c))
-proxyEq4 = theProxy
+proxyEq2 = theProxy
  where
   theProxy
     :: forall a b c
@@ -418,110 +402,32 @@ proxyInEqImplication2
   -> Proxy n
 proxyInEqImplication2 _ _ _ x = x
 
-type family F (n :: Nat) :: Nat
-type instance F 3 = 8
+lte_transitive
+  :: forall i j k
+  .  ( KnownNat i, KnownNat j, KnownNat k, i <= j, j <= k )
+  => ( i <=? k ) :~: 'True
+lte_transitive = Refl
 
--- proxyInEqImplication3 :: (KnownNat (F n))
---   => Proxy (n :: Nat)
---   -> Proxy (n :: Nat)
--- proxyInEqImplication3 = proxyInEqImplication3'
+lemma2
+  :: forall j n
+  .  ( j <= n, 1 <= (n-j) )
+  => ( (j+1) <=? n ) :~: 'True
+lemma2 = Refl
 
--- COMMENTED TEST CASE
--- proxyInEqImplication3' :: (F n <= (3 * (F n)))
---   => Proxy (n :: Nat)
---   -> Proxy (n :: Nat)
--- proxyInEqImplication3' = id
+invalid :: forall x y n. (x - n <=? y - n) :~: 'True -> (x <=? y) :~: 'True
+invalid Refl = Refl
 
-type family G (n :: Nat) :: Nat
-type instance G 2 = 3
+f :: Proxy (m + 1) -> ()
+f _ = ()
 
--- COMMENTED TEST CASE
--- proxyInEqImplication4 :: (1 <= (G n))
---   => Proxy (n :: Nat)
---   -> Proxy (n :: Nat)
--- proxyInEqImplication4 = proxyInEqImplication4'
-
--- proxyInEqImplication4' :: (F n <= ((G n) * (F n)))
---   => Proxy (n :: Nat)
---   -> Proxy (n :: Nat)
--- proxyInEqImplication4' = id
-
-data AtMost n = forall a. (KnownNat a, a <= n) => AtMost (Proxy a)
-
-instance Show (AtMost n) where
-  show (AtMost (x :: Proxy a)) = "AtMost " P.++ show (natVal x)
-
-succAtMost :: AtMost n -> AtMost (n + 1)
-succAtMost (AtMost (Proxy :: Proxy a)) = AtMost (Proxy :: Proxy a)
-
-eqReduceForward
-  :: Eq (Boo (n + 1))
-  => Dict (Eq (Boo (n + 2 - 1)))
-eqReduceForward = Dict
-
-eqReduceForwardMinusPlus
-  :: (Eq (Boo (0 + n + 1)), 1 <= n)
-  => Dict (Eq (Boo (n - 1 + 2)))
-eqReduceForwardMinusPlus = Dict
-
-eqReduceBackward
-  :: (Eq (Boo (m + 2 - 1)))
-  => Dict (Eq (Boo (m + 1)))
-eqReduceBackward = Dict
-
-eqReduceBackward'
-  :: (Eq (Boo (1 + m + 2)))
-  => Dict (Eq (Boo (m + 3)))
-eqReduceBackward' = Dict
-
--- COMMENTED TEST CASE
--- proxyInEq8fun
---   :: (1 <= (n + CLog 2 n))
---   => Proxy n
---   -> Proxy n
--- proxyInEq8fun = id
-
--- proxyInEq8
---   :: (1 <= n, KnownNat (CLog 2 n))
---   => Proxy n
---   -> Proxy n
--- proxyInEq8 = proxyInEq8fun
-
-data H2 = H2 { p :: Nat }
-
-class Q (dom :: Symbol) where
-  type G2 dom :: H2
-
-type family P (c :: H2) :: Nat where
-  P ('H2 p) = p
-
-type F2 (dom :: Symbol) = P (G2 dom)
-
-type Dom = "System"
-
-instance Q Dom where
-  type G2 Dom = 'H2 2
-
--- COMMENTED TEST CASE
--- tyFamMonotonicityFun :: (1 <= F2 dom) => Proxy (dom :: Symbol) -> ()
--- tyFamMonotonicityFun _ = ()
-
--- COMMENTED TEST CASE
--- tyFamMonotonicity :: (2 <= F2 dom) => Proxy (dom :: Symbol) -> ()
--- tyFamMonotonicity dom = tyFamMonotonicityFun dom
-
--- COMMENTED TEST CASE
--- oneLtPowSubst :: forall a b. (b ~ (2^a)) => Proxy a -> Proxy a
--- oneLtPowSubst = go
---   where
---     go :: 1 <= b => Proxy a -> Proxy a
---     go = id 
+g :: forall x . 1 <= x => Proxy x -> ()
+g = f @(x - 1)
 
 main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "ghc-typelits-natnormalise"
+tests = testGroup "ghc-typelits-smtsolver"
   [ testGroup "Basic functionality"
     [ testCase "show (head (1:>2:>3:>Nil))" $
       show (head (1:>2:>3:>Nil)) @?=
@@ -544,9 +450,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "show (unconcat (snat :: SNat 4) (1:>2:>3:>4:>5:>6:>7:>8:>9:>10:>11:>12:>Nil))" $
       show (unconcat (snat :: SNat 4) (1:>2:>3:>4:>5:>6:>7:>8:>9:>10:>11:>12:>Nil)) @?=
       "<<1,2,3,4>,<5,6,7,8>,<9,10,11,12>>"
-    -- , testCase "show (proxyFun3 (Proxy :: Proxy 9))" $
-    --   show (proxyFun3 (Proxy :: Proxy 9)) @?=
-    --   "()"
+    , testCase "show (proxyFun3 (Proxy :: Proxy 9))" $
+      show (proxyFun3 (Proxy :: Proxy 9)) @?=
+      "()"
     , testCase "show (proxyFun4 (Proxy :: Proxy 8))" $
       show (proxyFun4 (Proxy :: Proxy 8)) @?=
       "()"
@@ -554,17 +460,9 @@ tests = testGroup "ghc-typelits-natnormalise"
       show (proxyFun7 (Proxy :: Proxy 8) :: Proxy 3) @?=
       "Proxy"
     ]
-  -- , testGroup "Equality"
-    -- [ testCase "((2 ^ x) * (2 ^ (x + x))) ~ (2 * (2 ^ ((x + (x + x)) - 1)))" $
-    --   show (proxyEq1 @1 Proxy) @?=
-    --   "Proxy"
-    -- , testCase "(((2 ^ x) - 2) * (2 ^ (x + x))) ~ ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))" $
-    --   show (proxyEq2 @2 Proxy) @?=
-    --   "Proxy"
-    -- ]
   , testGroup "Implications"
     [ testCase "(x + 1) ~ (2 * y)) implies (((2 * (y - 1)) + 1)) ~ x" $
-      show (proxyEq3 (Proxy :: Proxy 3) (Proxy :: Proxy 2) Proxy) @?=
+      show (proxyEq1 (Proxy :: Proxy 3) (Proxy :: Proxy 2) Proxy) @?=
       "Proxy"
     , testCase "(n+1) ~ ((n1 + m) + 1), m ~ n1, n1 ~ ((n2 + m1) + 1) implies n1 ~ 1 + (n2 + m1)" $
       show (proxyEqSubst (Proxy :: Proxy 6) (Proxy :: Proxy 2) (Proxy :: Proxy 3)
@@ -584,9 +482,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "2a <= 4a" $
       show (proxyInEq4 (Proxy :: Proxy 2) (Proxy :: Proxy 4)) @?=
       "()"
-    -- , testCase "1 <= 2^a" $
-    --   show (proxyInEq5 (Proxy :: Proxy 1) (Proxy :: Proxy 1)) @?=
-    --   "()"
+    , testCase "1 <= 2^a" $
+      show (proxyInEq5 (Proxy :: Proxy 1) (Proxy :: Proxy 1)) @?=
+      "()"
     , testCase "`(2 <= (2 ^ (n + d)))` implies `(2 <= (2 ^ (d + n)))`" $
       show (proxyInEqImplication (Proxy :: Proxy 3) (Proxy :: Proxy 4)) @?=
       "Proxy"
@@ -602,24 +500,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "`a <= n` implies `a <= (n+1)`" $
       show (succAtMost (AtMost (Proxy :: Proxy 3) :: AtMost 5)) @?=
       "AtMost 3"
-    -- , testCase "1 <= 2^(a+3)" $
-    --   show (proxyInEq7 (Proxy :: Proxy 1) (Proxy :: Proxy 8)) @?=
-    --   "()"
-    -- , testCase "KnownNat (F a) implies F a <= 3 * F a" $
-    --   show (proxyInEqImplication3 (Proxy :: Proxy 3)) @?=
-    --   "Proxy"
-    -- , testCase "1 <= G a implies F a <= G a * F a" $
-    --   show (proxyInEqImplication4 (Proxy :: Proxy 2)) @?=
-    --   "Proxy"
-    -- , testCase "`(1 <= n)` only implies `(1 <= n + F n)` when `KnownNat (F n)`" $
-    --   show (proxyInEq8 (Proxy :: Proxy 2)) @?=
-    --   "Proxy"
-    -- , testCase "2 <= P (G2 dom) implies 1 <= P (G2 dom)" $
-    --   show (tyFamMonotonicity (Proxy :: Proxy Dom)) @?=
-    --   "()"
-    -- , testCase "b ~ (2^a) => 1 <= b" $
-    --   show (oneLtPowSubst (Proxy :: Proxy 0)) @?=
-    --   "Proxy"
+    , testCase "1 <= 2^(a+3)" $
+      show (proxyInEq7 (Proxy :: Proxy 1) (Proxy :: Proxy 8)) @?=
+      "()"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
@@ -629,9 +512,7 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "Unify \"(2*x)+4\" with \"7\"" $ testProxy5 `throws` testProxy5Errors
     , testCase "Unify \"2^k\" with \"7\"" $ testProxy6 `throws` testProxy6Errors
     , testCase "x ~ y + x" $ testProxy8 `throws` testProxy8Errors
-    -- , testCase "(CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => n ~ (n+d)" $
-    --     testProxy15 (Proxy :: Proxy 1) `throws` testProxy15Errors
-    , testCase "(n - 1) + 1 ~ n implies (1 <= n)" $ test16 `throws` test16Errors
+    , testCase "(n - 1) + 1 ~ n implies (1 <= n)" $ test15 `throws` test15Errors
     , testGroup "Inequality"
       [ testCase "a+1 <= a" $ testProxy9 `throws` testProxy9Errors
       , testCase "(a <=? a+1) ~ False" $ testProxy10 `throws` testProxy10Errors
@@ -640,7 +521,7 @@ tests = testGroup "ghc-typelits-natnormalise"
       , testCase "4a <= 2a" $ testProxy13 `throws` testProxy13Errors
       , testCase "2a <=? 4a ~ False" $ testProxy14 `throws` testProxy14Errors
       , testCase "Show (Boo n) => Show (Boo (n - 1 + 1))" $
-          testProxy17 `throws` test17Errors
+          testProxy16 `throws` test16Errors
       , testCase "1 <= m, m <= rp implies 1 <= rp - m" $ (testProxy19 (Proxy @1) (Proxy @1)) `throws` test19Errors
       , testCase "Vacuously: 1 <= m ^ 2 ~ True" $ testProxy20 `throws` testProxy20Errors
       ]

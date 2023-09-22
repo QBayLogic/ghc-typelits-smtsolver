@@ -357,33 +357,16 @@ testProxy14Errors =
     )]
 #endif
 
-type family CLog (b :: Nat) (x :: Nat) :: Nat
-type instance CLog 2 2 = 1
-
--- testProxy15 :: (CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => Proxy n -> Proxy (n+d)
--- testProxy15 = id
-
-testProxy15Errors =
-#if __GLASGOW_HASKELL__ >= 900
-  ["Expected: Proxy n -> Proxy (n + d)"
-  ,"  Actual: Proxy n -> Proxy n"
-  ]
-#else
-  ["Expected type: Proxy n -> Proxy (n + d)"
-  ,"Actual type: Proxy n -> Proxy n"
-  ]
-#endif
-
 data Fin (n :: Nat) where
   FZ :: Fin (n + 1)
   FS :: Fin n -> Fin (n + 1)
 
-test16 :: forall n . Integer -> Fin n
-test16 n = case n of
+test15 :: forall n . Integer -> Fin n
+test15 n = case n of
   0 -> FZ
   x -> FS (test16 @(n-1) (x-1))
 
-test16Errors =
+test15Errors =
 #if __GLASGOW_HASKELL__ >= 904
   ["Cannot satisfy: 1 <= n"]
 #elif __GLASGOW_HASKELL__ >= 902
@@ -416,13 +399,13 @@ data Dict c where
 deriving instance Show (Dict c)
 data Boo (n :: Nat) = Boo
 
-test17 :: Show (Boo n) => Proxy n -> Boo (n - 1 + 1) -> String
-test17 = const show
+test16 :: Show (Boo n) => Proxy n -> Boo (n - 1 + 1) -> String
+test16 = const show
 
-testProxy17 :: String
+testProxy16 :: String
 
-testProxy17 = test17 (Proxy :: Proxy 17) Boo
-test17Errors = test16Errors
+testProxy16 = test17 (Proxy :: Proxy 17) Boo
+test16Errors = test16Errors
 
 #if __GLASGOW_HASKELL__ >= 904
 test19f :: ((1 <= n) ~ (() :: Constraint))
