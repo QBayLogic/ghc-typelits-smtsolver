@@ -1,10 +1,6 @@
 cabal-version:      >=1.10
-name:               haskell-smt-test
-
-version:            0.1.0.1
-
--- synopsis:
--- description:
+name:               ghc-typelits-smtsolver
+version:            0.1.0.3
 
 license:            MIT
 license-file:       LICENSE
@@ -15,22 +11,21 @@ maintainer:         pokatilov0802@gmail.com
 category:           Type System
 build-type:         Simple
 
-extra-doc-files:    CHANGELOG.md
-
 library
-    exposed-modules:          SMTSolver
+    exposed-modules:          GHC.TypeLits.SMTSolver
     other-extensions:         TupleSections,
                               ViewPatterns
 
     -- Other library packages from which modules are imported.
-    build-depends:    base >=4.18.0.0,
+    build-depends:    base >=4.18.0.0 && <5,
                       containers >= 0.6.7,
                       extra >= 1.7,
                       ghc >= 9.6.2,
                       ghc-tcplugins-extra >= 0.4.4,
-                      simple-smt >= 0.9
+                      simple-smt >= 0.9,
+                      transformers >= 0.6.1.0
 
-    -- Directories containing source files.
+    -- Directories containing source files.и
     hs-source-dirs:   src
 
     -- Base language which the package is written in.
@@ -42,7 +37,7 @@ test-suite unit-tests
     other-modules:    ErrorTests
     hs-source-dirs:   tests
     build-depends:    base >=4.18.0.0,
-                      haskell-smt-test,
+                      ghc-typelits-smtsolver,
                       tasty >= 0.10,
                       tasty-hunit >= 0.9,
                       template-haskell >= 2.11.0.0

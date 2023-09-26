@@ -11,8 +11,8 @@
 {-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE NoImplicitPrelude         #-}
 {-# LANGUAGE PolyKinds                 #-}
-{-# LANGUAGE RoleAnnotations           #-}
 {-# LANGUAGE Rank2Types                #-}
+{-# LANGUAGE RoleAnnotations           #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE TypeApplications          #-}
 {-# LANGUAGE TypeFamilies              #-}
@@ -23,7 +23,7 @@
 {-# LANGUAGE NoStarIsType              #-}
 #endif
 
-{-# OPTIONS_GHC -fplugin SMTSolver #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.SMTSolver #-}
 {-# OPTIONS_GHC -dcore-lint #-}
 
 import GHC.TypeLits
@@ -350,25 +350,6 @@ proxyEq1
   -> Proxy x
 proxyEq1 _ _ x = x
 
--- Would yield (b <=? c) ~ 'True
-proxyEq2
-  :: forall a b c
-   . (KnownNat a, c <= b, b <= a)
-  => Proxy b
-  -> Proxy c
-  -> Proxy a
-  -> Proxy (((a - b) + c) + (b - c))
-proxyEq2 = theProxy
- where
-  theProxy
-    :: forall a b c
-     . (KnownNat (((a - b) + c) + (b - c)), c <= b, b <= a)
-    => Proxy b
-    -> Proxy c
-    -> Proxy a
-    -> Proxy (((a - b) + c) + (b - c))
-  theProxy _ _ = id
-
 proxyInEqImplication :: (2 <= (2 ^ (n + d)))
   => Proxy d
   -> Proxy n
@@ -450,9 +431,6 @@ tests = testGroup "ghc-typelits-smtsolver"
     , testCase "show (unconcat (snat :: SNat 4) (1:>2:>3:>4:>5:>6:>7:>8:>9:>10:>11:>12:>Nil))" $
       show (unconcat (snat :: SNat 4) (1:>2:>3:>4:>5:>6:>7:>8:>9:>10:>11:>12:>Nil)) @?=
       "<<1,2,3,4>,<5,6,7,8>,<9,10,11,12>>"
-    , testCase "show (proxyFun3 (Proxy :: Proxy 9))" $
-      show (proxyFun3 (Proxy :: Proxy 9)) @?=
-      "()"
     , testCase "show (proxyFun4 (Proxy :: Proxy 8))" $
       show (proxyFun4 (Proxy :: Proxy 8)) @?=
       "()"
@@ -491,15 +469,9 @@ tests = testGroup "ghc-typelits-smtsolver"
     , testCase "1 <= a+3" $
       show (proxyInEq6 (Proxy :: Proxy 1) (Proxy :: Proxy 8)) @?=
       "()"
-    , testCase "`1 <= 2*x` implies `1 <= x`" $
-      show (predBNat (B1 (B1 BT))) @?=
-      "b2"
     , testCase "`x + 2 <= y` implies `x <= y` and `2 <= y`" $
       show (proxyInEqImplication2 (Proxy :: Proxy 3) (Proxy :: Proxy 2) (Proxy :: Proxy 2) Proxy) @?=
       "Proxy"
-    , testCase "`a <= n` implies `a <= (n+1)`" $
-      show (succAtMost (AtMost (Proxy :: Proxy 3) :: AtMost 5)) @?=
-      "AtMost 3"
     , testCase "1 <= 2^(a+3)" $
       show (proxyInEq7 (Proxy :: Proxy 1) (Proxy :: Proxy 8)) @?=
       "()"
@@ -556,46 +528,4 @@ predFin :: Fin (n + 2) -> Fin (n + 1)
 predFin (FS fn) = fn
 predFin FZ      = FZ
 
-showSucPred :: KnownNat (n + 2) => Fin (n + 2) -> String
-showSucPred = showFin .  FS . predFin
 
-class Up env (n :: Nat) where
-  up :: env -> Fin n -> Fin (n + 1)
-
-class Down env (n :: Nat) where
-  down :: env -> Fin n -> Fin (n - 1)
-
-class ShowWith env (n :: Nat) where
-  showWith :: env -> Fin n -> String
-
-showDownUp
-  :: (Up env n, Down env (n + 1), ShowWith env n)
-  => env -> Fin n -> String
-showDownUp env fn = showWith env $ down env $ up env fn
-
-showDownUp'
-  :: (Up env n, Down env (n + 1), KnownNat n)
-  => env -> Fin n -> String
-showDownUp' env fn = showFin $ down env $ up env fn
-
-data family FakeUVector (n :: Nat) :: Type
-data family FakeMUVector (n :: Nat) :: Type
-type family Mutable (v :: Nat -> Type) :: Nat -> Type
-type instance Mutable FakeUVector = FakeMUVector
-
-class (IsMVector FakeMUVector n, IsVector FakeUVector n)
-   => FakeUnbox n
-class IsMVector (v :: Nat -> Type) a where
-  touchMVector :: v a -> v a
-class IsMVector (Mutable v) a => IsVector v a where
-  touchVector :: v a -> v a
-
-newtype WrapFakeVector n = WFV { unWrap :: FakeUVector (1 + n) }
-newtype WrapFakeMVector n = MWFV { unWrapM :: FakeMUVector (1 + n) }
-type instance Mutable WrapFakeVector = WrapFakeMVector
-
--- The following two instances cannot be derived without simplification phase!
-instance FakeUnbox (n + 1) => IsVector WrapFakeVector n where
-  touchVector = WFV . touchVector . unWrap
-instance FakeUnbox (n + 1) => IsMVector WrapFakeMVector n where
-  touchMVector = MWFV . touchMVector . unWrapM

@@ -15,7 +15,7 @@
 #endif
 
 {-# OPTIONS_GHC -fdefer-type-errors #-}
-{-# OPTIONS_GHC -fplugin  SMTSolver #-}
+{-# OPTIONS_GHC -fplugin  GHC.TypeLits.SMTSolver #-}
 
 module ErrorTests where
 
