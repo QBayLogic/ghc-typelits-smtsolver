@@ -1,5 +1,8 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use lambda-case" #-}
 
 module GHC.TypeLits.SMTSolver
   ( plugin )
@@ -33,19 +36,21 @@ import GHC.Core.Type ( typeKind )
 
 import GHC.Data.FastString ( fsLit )
 import GHC.Driver.Plugins ( Plugin (..), defaultPlugin )
-import GHC.Plugins ( mkTcOcc )
+import GHC.Plugins ( mkTcOcc, Expr (Coercion) )
 
 import GHC.Core.Predicate ( classifyPredType, EqRel (NomEq), Pred (..) )
 import GHC.Core.TyCon ( TyCon )
-import GHC.Core.TyCo.Rep ( Type (..), TyLit(NumTyLit) )
+import GHC.Core.TyCo.Rep ( Type (..), TyLit(NumTyLit), UnivCoProvenance (PluginProv) )
+import GHC.Core.Coercion
+    ( Role(Nominal, Representational), mkUnivCo )
 import GHC.Types.Name ( getOccName, occNameString, getName, nameStableString )
 
-import GHC.Tc.Plugin ( TcPluginM, tcPluginIO, tcLookupTyCon )
+import GHC.Tc.Plugin ( TcPluginM, tcPluginIO, tcPluginTrace, tcLookupTyCon )
 import GHC.Tc.Types ( TcPlugin (..), TcPluginSolveResult (..) )
 import GHC.TcPluginM.Extra ( tracePlugin, lookupName, lookupModule, evByFiat )
 
 import GHC.Tc.Types.Constraint ( Ct, ctEvidence, ctEvPred )
-import GHC.Tc.Types.Evidence ( EvBindsVar, EvTerm )
+import GHC.Tc.Types.Evidence ( EvBindsVar, EvTerm (EvExpr), evCast, evId )
 
 import GHC.Types.Unique.FM ( emptyUFM )
 
@@ -54,7 +59,10 @@ import GHC.Tc.Utils.TcType
 import GHC.Unit.Module ( mkModuleName )
 import GHC.Utils.Outputable
 
+import SimpleSMT (Solver, SExpr)
 import qualified SimpleSMT as SMT
+import GHC.Core.DataCon (dataConWrapId)
+import GHC.Builtin.Types (cTupleDataCon)
 
 plugin :: Plugin
 plugin =
@@ -82,12 +90,12 @@ powerSymbol = "^"
 verboseLevel :: Int
 verboseLevel = 1
 
-exp' :: SMT.SExpr -> SMT.SExpr -> SMT.SExpr
+exp' :: SExpr -> SExpr -> SMT.SExpr
 exp' x y = SMT.fun powerSymbol [x, y]
 
 type TcS = (TyCon, TyCon)
 data S = S
-  { smtSolver :: SMT.Solver
+  { smtSolver :: Solver
   , _typeCons  :: TcS
   }
 
@@ -141,41 +149,62 @@ smtSolverSolve (S solver tcs) _ givens wanteds =
     (givenSExprs,  vs)  = unzip $ mapMaybe (toSExpr tcs) givens
     (wantedSExprs, vs1) = unzip $ mapMaybe (toSExpr tcs) wanteds
     (vars, exprs) = (concat *** concat) $ unzip (vs ++ vs1)
-  in tcPluginIO $ SMT.inNewScope solver $ do
+  in do
+    tcPluginTrace "given SExpr" (ppr givenSExprs)
+    tcPluginTrace "wanted SExpr" (ppr wantedSExprs)
+    tcPluginIO $ SMT.inNewScope solver $ do
 
-    varDecls <- mapM (constructDeclaration solver) $ nub vars
+      varDecls <- mapM (constructDeclaration solver) $ nub vars
 
-    -- Assert that both variables and all the intermediate expressions are natural numbers (>= 0)
-    mapM_ (assertNaturalness solver) varDecls
-    mapM_ (assertNaturalness solver) exprs
+      -- Assert that both variables and all the intermediate expressions are natural numbers (>= 0)
+      mapM_ (assertNaturalness solver) varDecls
+      mapM_ (assertNaturalness solver) exprs
 
-    -- Assert given predicates
-    mapM_ (SMT.assert solver . exprExpr) givenSExprs
+      -- Assert given predicates
+      mapM_ (SMT.assert solver . exprExpr) givenSExprs
 
-    checkForAll solver wantedSExprs <&>
-      \case (solved,[]) -> TcPluginOk (map (attachEvidence . exprCt) solved) []
-            _ -> TcPluginOk [] []
+      checkForAll solver wantedSExprs <&>
+        \ s -> case s of
+          (solved,[])
+            | let evds = mapMaybe (attachEvidence . exprCt) solved
+              -> TcPluginOk evds []
+          _ -> TcPluginOk [] []
   where
-    constructDeclaration :: SMT.Solver -> String -> IO SMT.SExpr
+    constructDeclaration :: Solver -> String -> IO SExpr
     constructDeclaration s name = SMT.declare s name SMT.tInt
 
-    assertNaturalness :: SMT.Solver -> SMT.SExpr -> IO ()
+    assertNaturalness :: Solver -> SExpr -> IO ()
     assertNaturalness s sexpr = do
       SMT.assert s $ SMT.leq (SMT.int 0) sexpr
-            
-    checkForAll :: SMT.Solver -> [Expr] -> IO ([Expr], [Expr])
+
+    checkForAll :: Solver -> [Expr'] -> IO ([Expr'], [Expr'])
     checkForAll s wanteds = SMT.inNewScope s $
       -- for all x (P(x) => Q(x)) <=> not exists x P(x) ^ ¬Q(x)
       partitionM (\w -> (SMT.assert s (SMT.not $ exprExpr w) >> SMT.check s) <&> (SMT.Unsat ==)) wanteds
 
-    attachEvidence :: Ct -> (EvTerm,Ct)
-    attachEvidence ct = (evByFiat "SMTSolver" q q, ct)
-      where q = TyConApp promotedTrueDataCon []
+    attachEvidence :: Ct -> Maybe (EvTerm,Ct)
+    attachEvidence ct =
+      case classifyPredType $ ctEvPred $ ctEvidence ct of
+        EqPred NomEq t1 t2 ->
+          let ctEv = mkUnivCo (PluginProv "ghc-typelits-smtsolver") Nominal t1 t2
+          in Just (EvExpr (Coercion ctEv), ct)
+        IrredPred p ->
+          let t1 = mkTyConApp (cTupleTyCon 0) []
+              co = mkUnivCo (PluginProv "ghc-typelits-smtsolver") Representational t1 p
+              dcApp = evId $ dataConWrapId $ cTupleDataCon 0
+          in Just (evCast dcApp co, ct)
+        _ -> Nothing
 
-data Expr = Expr
+data Expr' = Expr'
   { exprCt :: Ct
-  , exprExpr :: SMT.SExpr
+  , exprExpr :: SExpr
   }
+
+instance Outputable SExpr where
+  ppr s = text $ show s
+
+instance Outputable Expr' where
+  ppr (Expr' {..}) = text "Expr" <+> ppr exprCt <+> ppr exprExpr
 
 -- | Convert constraints to S-Expressions
 --
@@ -186,7 +215,7 @@ toSExpr :: TcS
         -- ^ Looked up type constructors for OrdCond and Assert
         -> Ct
         -- ^ Constraint to convert
-        -> Maybe (Expr,([String],[SMT.SExpr]))
+        -> Maybe (Expr',([String],[SExpr]))
         -- ^ Resulting S-Expression with all the variables and sub-expressions
 toSExpr (ordCondT, assertT) ct =
   case classifyPredType $ ctEvPred $ ctEvidence ct of
@@ -204,7 +233,7 @@ toSExpr (ordCondT, assertT) ct =
             , isNatKind (typeKind y)
             , let (x',(kv,uv)) = runWriter (termToSExpr x)
             , let (y',(kv1,uv1)) = runWriter (termToSExpr y)
-            -> Just (Expr ct (SMT.eq x' y'), (kv ++ kv1, uv ++ uv1))
+            -> Just (Expr' ct (SMT.eq x' y'), (kv ++ kv1, uv ++ uv1))
           _ -> Nothing
       | tc == ordCondT, [_, cmp, lt, eq, gt] <- xs
       , TyConApp tcCmpNat [x, y] <- cmp
@@ -217,9 +246,9 @@ toSExpr (ordCondT, assertT) ct =
       , let (y',(kv1,uv1)) = runWriter (termToSExpr y)
       = case tc' of
           _ | tc' == promotedTrueDataCon
-            -> Just (Expr ct (SMT.leq x' y'), (kv ++ kv1, uv ++ uv1))
+            -> Just (Expr' ct (SMT.leq x' y'), (kv ++ kv1, uv ++ uv1))
           _ | tc' == promotedFalseDataCon
-            -> Just (Expr ct (SMT.gt x' y'), (kv ++ kv1, uv ++ uv1))
+            -> Just (Expr' ct (SMT.gt x' y'), (kv ++ kv1, uv ++ uv1))
           _ -> Nothing
       | tc == assertT
       , tc' == cTupleTyCon 0
@@ -234,14 +263,14 @@ toSExpr (ordCondT, assertT) ct =
       , gtTc == promotedFalseDataCon
       , let (x',(kv,uv)) = runWriter (termToSExpr x)
       , let (y',(kv1,uv1)) = runWriter (termToSExpr y)
-      = Just (Expr ct (SMT.leq x' y'), (kv ++ kv1, uv ++ uv1))
+      = Just (Expr' ct (SMT.leq x' y'), (kv ++ kv1, uv ++ uv1))
 
     go x y
       | isNatKind (typeKind x)
       , isNatKind (typeKind y)
       , let (x',(kv,uv)) = runWriter (termToSExpr x)
       , let (y',(kv1,uv1)) = runWriter (termToSExpr y)
-      = Just (Expr ct (SMT.eq x' y'), (kv ++ kv1, uv ++ uv1))
+      = Just (Expr' ct (SMT.eq x' y'), (kv ++ kv1, uv ++ uv1))
       | otherwise
       = Nothing
 
@@ -258,30 +287,36 @@ toSExpr (ordCondT, assertT) ct =
       , gtTc == promotedFalseDataCon
       , let (x',(kv,uv)) = runWriter (termToSExpr x)
       , let (y',(kv1,uv1)) = runWriter (termToSExpr y)
-      = Just (Expr ct (SMT.leq x' y'), (kv ++ kv1, uv ++ uv1))
+      = Just (Expr' ct (SMT.leq x' y'), (kv ++ kv1, uv ++ uv1))
 
     go2 _ = Nothing
 
     isNatKind = (`eqType` naturalTy)
 
-termToSExpr :: Type -> Writer ([String], [SMT.SExpr]) SMT.SExpr
+termToSExpr :: Type -> Writer ([String], [SExpr]) SExpr
 termToSExpr ty | Just ty1 <- coreView ty = termToSExpr ty1
 termToSExpr (LitTy (NumTyLit i)) = return n
   where n = SMT.int i
-termToSExpr (TyVarTy v) =
-  let cName = nameStableString $ getName v
-      c     = SMT.const cName
-  in tell ([cName],[]) >> return c
+termToSExpr (TyVarTy n) =
+  let vName = getUniqueName n
+      v     = SMT.const vName
+  in tell ([vName],[]) >> return v
 termToSExpr (TyConApp tc [x, y]) =
   do
     expr <- go tc <$> termToSExpr x <*> termToSExpr y
     tell ([],[expr])
     return expr
   where
-    go :: TyCon -> SMT.SExpr -> SMT.SExpr -> SMT.SExpr
+    go :: TyCon -> SExpr -> SExpr -> SExpr
     go tc
       | tc == typeNatAddTyCon = SMT.add
       | tc == typeNatSubTyCon = SMT.sub
       | tc == typeNatMulTyCon = SMT.mul
       | tc == typeNatExpTyCon = exp'
-termToSExpr t = error "Simplification inside type application is not supported"
+termToSExpr t =
+  let cName = getUniqueName t
+      c     = SMT.const cName
+  in error ""
+
+getUniqueName :: Outputable a => a -> String
+getUniqueName = takeWhile (/= '_') . showPprUnsafe
