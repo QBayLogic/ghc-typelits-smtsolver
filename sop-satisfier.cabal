@@ -1,0 +1,50 @@
+cabal-version:      3.0
+name:               sop-satisfier
+version:            0.3.4.5
+synopsis:           Check satisfiability of expressions on natural numbers
+description:
+    Expression satisfier on natural numbers.
+    .
+    It can reason about expressions contatining
+    addition and multiplication.
+    It also provides limited support of exponentiations and subtraction.
+license:            GPL-3.0-or-later
+license-file:       LICENSE
+author:             Aleksandr Pokatilov
+maintainer:         pokatilov0802@gmail.com
+build-type:         Simple
+category:           Solver, Symbolic Arithmetic
+extra-doc-files:    CHANGELOG.md
+                    README.md
+
+source-repository head
+    type: git
+    location: https://github.com/NeuroCorgi/sop-satisfier
+
+common warnings
+    ghc-options: -Wall
+
+library
+    import:           warnings
+    exposed-modules:  SoPSat.Satisfier,
+                      SoPSat.SoP,
+                      SoPSat.Internal.Unify,
+                      SoPSat.Internal.Range,
+                      SoPSat.Internal.SoP,
+                      SoPSat.Internal.NewtonsMethod,
+                      SoPSat.Internal.SolverMonad
+    build-depends:    base >=4.16 && <5,
+                      containers ^>=0.6.7,
+                      transformers >=0.5
+    hs-source-dirs:   src
+    default-language: Haskell2010
+
+test-suite system-tests
+    type:             exitcode-stdio-1.0
+    main-is:          SystemTests.hs
+    build-depends:    base >=4.16 && <5,
+                      sop-satisfier,
+                      tasty ^>= 1.5,
+                      tasty-hunit ^>=0.9
+    hs-source-dirs:   tests
+    default-language: Haskell2010
